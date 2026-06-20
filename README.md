@@ -137,6 +137,52 @@ A directory with two similar sentences, an unrelated sentence, and two random
 The encrypted pair scoring well below the doc-vs-encrypted pairs is exactly the
 behaviour the fingerprint and entropy terms are designed to produce.
 
+## Explaining a pair: shared chunks
+
+Beyond a single similarity score, `sim explain` shows *which byte ranges* of one
+file occur in another — the concrete shared structure behind the score.
+
+```sh
+sim explain REF TARGET                 # spans of TARGET that occur in REF
+sim explain --both REF TARGET          # also the reverse direction
+sim explain --format json REF TARGET   # machine-readable
+sim explain --min-match 32 REF TARGET  # require longer matches
+```
+
+```
+tgt.bin decomposed against ref.bin  (min-match=16)
+chunk  kind        b_start       b_end         len      a_offset
+-----  -------  ----------  ----------  ----------  ------------
+    0  literal           0         100         100             -
+    1  match           100        1124        1024           300
+    2  literal        1124        1624         500             -
+Coverage: 1024/1624 bytes (63.1%) matched across 1 span(s)
+```
+
+Each `match` chunk is a run of TARGET that appears verbatim in REF, annotated
+with the offset in REF where it was found; `literal` chunks have no qualifying
+match. The chunks tile the whole target with no gaps or overlaps, and
+`coverage` (matched bytes / total) is itself an interpretable similarity signal.
+
+### How it works
+
+When TARGET is compressed against a zstd dictionary built from REF, zstd encodes
+it as literals plus `(offset, length)` back-references; a reference that reaches
+into REF's content *is* a shared chunk. The high-level zstd API discards those
+references, so `sim` reconstructs the same idea directly and exactly: a greedy
+LZ77 parse of TARGET against REF's raw bytes using a hash-chain match finder
+(the classic zlib/zstd match-finder structure), reporting the longest match
+(≥ `--min-match` bytes) at each position. This is pure Go, exact, and — unlike
+zstd's internal, compression-level-dependent parse — fully reproducible.
+
+Two caveats worth knowing:
+
+- It matches against REF's **raw bytes**, not the *trained* dictionary. The
+  trained dictionary is a distilled set of common substrings, so "shared with
+  REF" is the more direct and useful question when comparing two files.
+- `--min-match` controls noise: very short matches (a few bytes) occur by chance
+  in any data, so the default of 16 bytes filters incidental coincidences.
+
 ## Design notes
 
 **Concurrency.** zstd compression is the hot path. `Encoder.EncodeAll` is

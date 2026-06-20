@@ -21,7 +21,13 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	var err error
+	if len(os.Args) > 1 && os.Args[1] == "explain" {
+		err = runExplain(os.Args[2:])
+	} else {
+		err = run()
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
