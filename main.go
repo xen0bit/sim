@@ -20,6 +20,11 @@ import (
 	"github.com/xen0bit/sim/filesim"
 )
 
+// defaultMaxTablePairs caps table mode, which buffers every result in memory to
+// sort. At ~88 bytes/result this is ~90MB; beyond it a table is both unreadable
+// and memory-hungry, so callers should switch to streaming CSV.
+const defaultMaxTablePairs = 1_000_000
+
 func main() {
 	var err error
 	if len(os.Args) > 1 && os.Args[1] == "explain" {
@@ -65,6 +70,9 @@ Score components (all in [0, 1], lower = more similar):
 	workers := fs.Int("workers", filesim.DefaultWorkers(), "worker pool size")
 	sortBy := fs.String("sort", "hybrid", "sort field: hybrid|ncd_dict|ncd_fingerprint|entropy_global|entropy_profile")
 	format := fs.String("format", "table", "output format: table|csv")
+	maxTablePairs := fs.Int("max-table-pairs", defaultMaxTablePairs,
+		"refuse table mode above this many pairs (it buffers all in memory); 0 = unlimited")
+	progress := fs.Bool("progress", false, "show a live progress bar with ETA on stderr")
 	verbose := fs.Bool("verbose", false, "verbose progress on stderr")
 	fs.Parse(os.Args[1:])
 
@@ -120,6 +128,18 @@ Score components (all in [0, 1], lower = more similar):
 		return fmt.Errorf("need at least 2 files; found %d", len(files))
 	}
 
+	// Table mode buffers every result in memory to sort; refuse before the
+	// expensive preprocessing pass when the pair count would be unreasonable.
+	// NumPairs(len(files)) is an upper bound (some files may fail to load).
+	if *format == "table" && *maxTablePairs > 0 {
+		if n := filesim.NumPairs(len(files)); n > *maxTablePairs {
+			return fmt.Errorf(
+				"%s files => %s pairs, too many for table mode (it buffers all results in memory).\n"+
+					"Use --format csv (streams to stdout), or raise --max-table-pairs (0 = unlimited).",
+				humanInt(int64(len(files))), humanInt(int64(n)))
+		}
+	}
+
 	if *verbose {
 		fmt.Fprintf(os.Stderr, "Found %d files. Preprocessing with %d workers...\n", len(files), *workers)
 	}
@@ -136,6 +156,7 @@ Score components (all in [0, 1], lower = more similar):
 	}
 
 	results := filesim.Pairs(metas, *alpha, *beta, *workers, warn)
+	results = withProgress(results, filesim.NumPairs(len(metas)), *progress)
 
 	if *format == "csv" {
 		return streamCSV(results)

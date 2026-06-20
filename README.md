@@ -42,7 +42,28 @@ sim /path/to/dir --workers 8 --verbose            # tune concurrency, log progre
 | `--workers` | `NumCPU-1` | Worker pool size. |
 | `--sort` | `hybrid` | `hybrid` \| `ncd_dict` \| `ncd_fingerprint` \| `entropy_global` \| `entropy_profile`. |
 | `--format` | `table` | `table` \| `csv`. |
+| `--max-table-pairs` | `1000000` | Refuse table mode above this many pairs; `0` = unlimited. |
+| `--progress` | off | Live progress bar with ETA on stderr (use with large corpora). |
 | `--verbose` | off | Progress and warnings on stderr. |
+
+With many files the pair phase dominates (it is `O(N²)`), so `--progress` renders
+a live bar to stderr — it never touches stdout, so it is safe to combine with
+`--format csv > results.csv`:
+
+```
+[==============>               ]  46.5%  3,321/7,140  1.7k/s  ETA 00:02  elapsed 00:02
+```
+
+Table mode buffers and sorts every result in memory, which is fine for human-
+readable output but explodes for large corpora (e.g. 17k files ≈ 151M pairs ≈
+tens of GB). `sim` therefore refuses table mode above `--max-table-pairs`
+(default 1,000,000) *before* doing any work, pointing you at streaming CSV:
+
+```
+$ sim /huge/dir
+Error: 2,000 files => 1,999,000 pairs, too many for table mode (it buffers all results in memory).
+Use --format csv (streams to stdout), or raise --max-table-pairs (0 = unlimited).
+```
 
 `alpha + beta` must be `<= 1.0`.
 
